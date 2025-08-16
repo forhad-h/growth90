@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Growth90 - System Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #111827;
+            color: #F9FAFB;
+        }
+        .test-item {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 5px solid #60A5FA;
+            background: #1F2937;
+        }
+        .success { border-left-color: #10B981; }
+        .error { border-left-color: #EF4444; }
+        .warning { border-left-color: #F59E0B; }
+        pre {
+            background: #374151;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Growth90 System Test</h1>
+    <p>This page will help diagnose any loading issues with your Growth90 app.</p>
+    
+    <div id="test-results">
+        <div class="test-item">
+            <h3>Testing file paths...</h3>
+            <div id="path-tests"></div>
+        </div>
+    </div>
+
+    <script>
+        // Test file loading
+        function testFile(path, name) {
+            return fetch(path)
+                .then(response => {
+                    if (response.ok) {
+                        return { name, path, status: 'success', message: 'File loaded successfully' };
+                    } else {
+                        return { name, path, status: 'error', message: `HTTP ${response.status}: ${response.statusText}` };
+                    }
+                })
+                .catch(error => {
+                    return { name, path, status: 'error', message: error.message };
+                });
+        }
+
+        // Files to test
+        const filesToTest = [
+            { path: './css/critical.css', name: 'Critical CSS' },
+            { path: './css/main.css', name: 'Main CSS' },
+            { path: './js/app.js', name: 'Main App JS' },
+            { path: './js/storage.js', name: 'Storage JS' },
+            { path: './js/api.js', name: 'API JS' },
+            { path: './assets/images/Growth90-logo.png', name: 'Logo Image' },
+            { path: './manifest.json', name: 'Manifest' },
+            { path: './sw.js', name: 'Service Worker' }
+        ];
+
+        // Run tests
+        Promise.all(filesToTest.map(file => testFile(file.path, file.name)))
+            .then(results => {
+                const pathTestsDiv = document.getElementById('path-tests');
+                
+                results.forEach(result => {
+                    const div = document.createElement('div');
+                    div.className = `test-item ${result.status}`;
+                    div.innerHTML = `
+                        <strong>${result.name}</strong><br>
+                        Path: <code>${result.path}</code><br>
+                        Status: ${result.message}
+                    `;
+                    pathTestsDiv.appendChild(div);
+                });
+
+                // Test JavaScript loading
+                const jsTestDiv = document.createElement('div');
+                jsTestDiv.className = 'test-item';
+                jsTestDiv.innerHTML = '<h3>JavaScript Loading Test</h3>';
+                
+                if (window.Growth90) {
+                    jsTestDiv.innerHTML += '<div class="test-item success">✓ Growth90 object is loaded</div>';
+                } else {
+                    jsTestDiv.innerHTML += '<div class="test-item error">✗ Growth90 object is not loaded</div>';
+                }
+
+                // Test IndexedDB
+                if ('indexedDB' in window) {
+                    jsTestDiv.innerHTML += '<div class="test-item success">✓ IndexedDB is supported</div>';
+                } else {
+                    jsTestDiv.innerHTML += '<div class="test-item error">✗ IndexedDB is not supported</div>';
+                }
+
+                // Test Service Worker
+                if ('serviceWorker' in navigator) {
+                    jsTestDiv.innerHTML += '<div class="test-item success">✓ Service Worker is supported</div>';
+                } else {
+                    jsTestDiv.innerHTML += '<div class="test-item warning">⚠ Service Worker is not supported</div>';
+                }
+
+                document.getElementById('test-results').appendChild(jsTestDiv);
+
+                // Show current URL info
+                const urlInfoDiv = document.createElement('div');
+                urlInfoDiv.className = 'test-item';
+                urlInfoDiv.innerHTML = `
+                    <h3>Current URL Information</h3>
+                    <pre>
+Base URL: ${window.location.origin}
+Full URL: ${window.location.href}
+Pathname: ${window.location.pathname}
+Protocol: ${window.location.protocol}
+Host: ${window.location.host}
+                    </pre>
+                `;
+                document.getElementById('test-results').appendChild(urlInfoDiv);
+            });
+    </script>
+</body>
+</html>

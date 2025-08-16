@@ -46,7 +46,7 @@
 <FilesMatch "sw\.js$">
     Header set Content-Type "application/javascript"
     Header set Cache-Control "no-cache, no-store, must-revalidate"
-    Header set Service-Worker-Allowed "/growth90/"
+    Header set Service-Worker-Allowed "/"
 </FilesMatch>
 
 # Single Page Application routing
@@ -57,7 +57,7 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_URI} !^/api/
-    RewriteRule . /growth90/index.html [L]
+    RewriteRule . index.html [L]
 </IfModule>
 
 # Force HTTPS (uncomment when SSL is configured)

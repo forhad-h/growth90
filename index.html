@@ -25,20 +25,20 @@
     <meta name="description" content="Transform your professional skills in 90 days with personalized learning experiences">
     
     <!-- Progressive Web App manifest -->
-    <link rel="manifest" href="/growth90/manifest.json">
+    <link rel="manifest" href="./manifest.json">
     <meta name="theme-color" content="#1E3A8A">
     
     <!-- Preload critical resources with aggressive cache busting -->
-    <link rel="preload" href="/growth90/css/critical.css?v=dev&t=999" as="style">
-    <link rel="preload" href="/growth90/js/app.js?v=dev&t=999" as="script">
+    <link rel="preload" href="./css/critical.css?v=dev&t=999" as="style">
+    <link rel="preload" href="./js/app.js?v=dev&t=999" as="script">
     
     <!-- Stylesheets with aggressive cache busting -->
-    <link rel="stylesheet" href="/growth90/css/critical.css?v=dev&t=999">
-    <link rel="stylesheet" href="/growth90/css/main.css?v=dev&t=999" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="/growth90/css/onboarding.css?v=dev&t=999" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="/growth90/css/preferences.css?v=dev&t=999" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="/growth90/css/assessment.css?v=dev&t=999" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="/growth90/css/feedback.css?v=dev&t=999" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="./css/critical.css?v=dev&t=999">
+    <link rel="stylesheet" href="./css/main.css?v=dev&t=999" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="./css/onboarding.css?v=dev&t=999" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="./css/preferences.css?v=dev&t=999" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="./css/assessment.css?v=dev&t=999" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="./css/feedback.css?v=dev&t=999" media="print" onload="this.media='all'">
     
     <!-- Inline critical CSS for immediate layout -->
     <style>
@@ -585,10 +585,10 @@
     </style>
     
     <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="/growth90/favicon.ico">
-    <link rel="icon" type="image/png" sizes="32x32" href="/growth90/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/growth90/favicon-16x16.png">
-    <link rel="apple-touch-icon" href="/growth90/apple-touch-icon.png">
+    <link rel="icon" type="image/x-icon" href="./favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png">
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 </head>
 <body>
     <!-- Skip navigation for accessibility -->
@@ -600,7 +600,7 @@
             <div class="logo-section">
                 <a href="#home" class="logo-link" aria-label="Go to homepage - Growth90 Professional Learning Platform">
                     <div class="logo">
-                        <img src="/growth90/assets/images/Growth90-logo.png" alt="Growth90" style="height: 40px; width: auto; display: block;" />
+                        <img src="./assets/images/Growth90-logo.png" alt="Growth90" style="height: 40px; width: auto; display: block;" />
                     </div>
                 </a>
             </div>
@@ -724,16 +724,16 @@
           return originalFetch.apply(this, arguments);
       };
     </script>
-    <script src="/growth90/js/storage.js?v=dev&t=999" defer></script>
-    <script src="/growth90/js/api.js?v=dev&t=999" defer></script>
-    <script src="/growth90/js/app.js?v=dev&t=999" defer></script>
-    <script src="/growth90/js/preferences.js?v=dev&t=999" defer></script>
-    <script src="/growth90/js/content-delivery.js?v=dev&t=999" defer></script>
-    <script src="/growth90/js/assessment-engine.js?v=dev&t=999" defer></script>
+    <script src="./js/storage.js?v=dev&t=999" defer></script>
+    <script src="./js/api.js?v=dev&t=999" defer></script>
+    <script src="./js/app.js?v=dev&t=999" defer></script>
+    <script src="./js/preferences.js?v=dev&t=999" defer></script>
+    <script src="./js/content-delivery.js?v=dev&t=999" defer></script>
+    <script src="./js/assessment-engine.js?v=dev&t=999" defer></script>
     <!-- removed simplified duplicate: assessment-engine-simplified.js -->
-    <script src="/growth90/js/feedback-system.js?v=dev&t=999" defer></script>
+    <script src="./js/feedback-system.js?v=dev&t=999" defer></script>
     <!-- removed simplified duplicate: feedback-system-simplified.js -->
-    <script src="/growth90/js/onboarding.js?v=dev&t=999" defer></script>
+    <script src="./js/onboarding.js?v=dev&t=999" defer></script>
     <!-- removed simplified duplicate: onboarding-simplified.js -->
     <script>
         // CSS Loading Detection and Cache Management
@@ -753,7 +753,7 @@
         
         // Service worker registration with cache busting
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/growth90/sw.js?v=dev&t=999')
+            navigator.serviceWorker.register('./sw.js?v=dev&t=999')
                 .then(registration => {
                     // ServiceWorker registration successful
                 })

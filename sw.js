@@ -386,8 +386,8 @@ self.addEventListener('push', (event) => {
     
     const options = {
         body: 'You have new learning content available!',
-        icon: '/growth90/icons/icon-192x192.png',
-        badge: '/growth90/icons/badge-72x72.png',
+        icon: './icons/icon-192x192.png',
+        badge: './icons/badge-72x72.png',
         data: {
             url: '/'
         },
