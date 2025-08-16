@@ -1,0 +1,2 @@
+- Don't need to write .md file what you've done
+- If you create any file for test purpose remove them after finshing tests

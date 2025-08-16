@@ -1,0 +1,62 @@
+# Standard .gitignore for a web app (PHP + JS)
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs_vista.db
+
+# Logs and runtime
+logs/
+*.log
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+.cache/
+coverage/
+
+# Build outputs
+dist/
+build/
+.parcel-cache/
+out/
+
+# Dependencies
+node_modules/
+vendor/
+composer.phar
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Editor and IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*~
+
+# Testing and coverage caches
+.phpunit.result.cache
+
+# Framework- or tool-specific caches
+.next/
+.nuxt/
+.sass-cache/
+
+# Misc
+*.local
+*.orig
+
