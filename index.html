@@ -697,7 +697,6 @@
               event.filename.includes('tag.js') ||
               event.message.includes('leadsy.ai')
           )) {
-              console.warn('Suppressed external tracking script error:', event.message);
               event.preventDefault();
               return false;
           }
@@ -707,7 +706,6 @@
       window.addEventListener('unhandledrejection', function(event) {
           if (event.reason && event.reason.message && 
               event.reason.message.includes('leadsy.ai')) {
-              console.warn('Suppressed external tracking script promise rejection');
               event.preventDefault();
           }
       });
@@ -717,7 +715,6 @@
       window.fetch = function(url, options) {
           // Block requests to known problematic tracking domains
           if (typeof url === 'string' && url.includes('leadsy.ai')) {
-              console.warn('Blocked request to external tracking domain:', url);
               return Promise.resolve(new Response('{"blocked": true}', {
                   status: 200,
                   statusText: 'OK',

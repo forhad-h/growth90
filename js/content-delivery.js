@@ -81,16 +81,42 @@
 
                 // If curriculum exists, map to content; otherwise fall back to API
                 let dailyContent = null;
-                if (Array.isArray(activePath.curriculum) && activePath.curriculum.length) {
-                    const dayPlan = activePath.curriculum.find(d => d.day === Number(dayNumber));
+                let curriculum = null;
+                
+                // Support multiple curriculum data formats
+                if (activePath.pathData && Array.isArray(activePath.pathData.daily_curriculum)) {
+                    curriculum = activePath.pathData.daily_curriculum;
+                } else if (Array.isArray(activePath.curriculum)) {
+                    curriculum = activePath.curriculum;
+                } else if (Array.isArray(activePath.days)) {
+                    curriculum = activePath.days;
+                }
+                
+                if (curriculum && curriculum.length) {
+                    const dayPlan = curriculum.find(d => d.day === Number(dayNumber));
                     if (dayPlan) {
                         dailyContent = mapCurriculumDayToContent(dayPlan, activePath);
+                    } else {
                     }
+                } else {
                 }
                 if (!dailyContent) {
                     const preferences = Growth90.User.Preferences.getAllPreferences();
                     const userContext = getUserContext();
-                    const learningObjective = activePath?.title || `Day ${dayNumber} lesson`;
+                    
+                    // Try to get the specific learning objective from curriculum first
+                    let learningObjective = `Day ${dayNumber} lesson`;
+                    if (curriculum && curriculum.length > 0) {
+                        const dayPlan = curriculum.find(d => d.day === Number(dayNumber));
+                        if (dayPlan && dayPlan.primary_learning_objective) {
+                            learningObjective = dayPlan.primary_learning_objective;
+                        } else {
+                        }
+                    } else {
+                        // Fallback to path title or generic
+                        learningObjective = activePath?.title || learningObjective;
+                    }
+                    
                     dailyContent = await Growth90.Data.API.content.getDailyLesson(learningObjective, userContext, dayNumber);
                 }
 
@@ -99,8 +125,11 @@
                 const userContext = getUserContext();
                 const enhancedContent = enhanceContent(dailyContent, userContext, preferences);
 
-                // Cache the content
-                contentCache.set(cacheKey, enhancedContent);
+                // Cache the content only if it's meaningful
+                if (isValidContentForCaching(enhancedContent)) {
+                    contentCache.set(cacheKey, enhancedContent);
+                } else {
+                }
 
                 // Store in local storage for offline access
                 await storeContentOffline(enhancedContent);
@@ -195,28 +224,142 @@
 
         // Map a curriculum day object to a daily content structure
         function mapCurriculumDayToContent(dayPlan, activePath) {
-            const title = dayPlan.primary_learning_objective || `Day ${dayPlan.day}`;
-            const objectives = Array.isArray(dayPlan.supporting_concepts) ? dayPlan.supporting_concepts : [];
+            const title = dayPlan.primary_learning_objective || dayPlan.title || `Day ${dayPlan.day}`;
+            const objectives = Array.isArray(dayPlan.supporting_concepts) ? dayPlan.supporting_concepts : 
+                              Array.isArray(dayPlan.objectives) ? dayPlan.objectives : [];
             const time = dayPlan.time_allocation || {};
             const minutes = (time.learn || 0) + (time.practice || 0) + (time.review || 0);
-            const contentHtml = `
-                <section>
-                    <h2>Practical Application</h2>
-                    <p>${dayPlan.practical_application || ''}</p>
-                    ${dayPlan.assessment_criteria ? `<h3>Assessment Criteria</h3><p>${dayPlan.assessment_criteria}</p>` : ''}
-                    ${dayPlan.extension_opportunities ? `<h3>Extensions</h3><p>${dayPlan.extension_opportunities}</p>` : ''}
-                    ${dayPlan.prerequisites ? `<h3>Prerequisites</h3><p>${dayPlan.prerequisites}</p>` : ''}
-                </section>
-            `;
+            
+            // Create rich content from curriculum data
+            const contentSections = [];
+            
+            // Main learning content
+            if (dayPlan.primary_learning_objective) {
+                contentSections.push(`
+                    <section class="learning-objective">
+                        <h2>📚 Today's Learning Objective</h2>
+                        <p><strong>${dayPlan.primary_learning_objective}</strong></p>
+                    </section>
+                `);
+            }
+            
+            // Supporting concepts
+            if (objectives.length > 0) {
+                contentSections.push(`
+                    <section class="supporting-concepts">
+                        <h3>🎯 Key Concepts</h3>
+                        <ul>
+                            ${objectives.map(concept => `<li>${concept}</li>`).join('')}
+                        </ul>
+                    </section>
+                `);
+            }
+            
+            // Practical application
+            if (dayPlan.practical_application) {
+                contentSections.push(`
+                    <section class="practical-application">
+                        <h3>🛠️ Practical Application</h3>
+                        <p>${dayPlan.practical_application}</p>
+                    </section>
+                `);
+            }
+            
+            // Time allocation breakdown
+            if (time.learn || time.practice || time.review) {
+                contentSections.push(`
+                    <section class="time-allocation">
+                        <h3>⏰ Time Allocation</h3>
+                        <div class="time-breakdown">
+                            ${time.learn ? `<div class="time-item">📖 Learn: ${time.learn} minutes</div>` : ''}
+                            ${time.practice ? `<div class="time-item">🎯 Practice: ${time.practice} minutes</div>` : ''}
+                            ${time.review ? `<div class="time-item">🔄 Review: ${time.review} minutes</div>` : ''}
+                        </div>
+                    </section>
+                `);
+            }
+            
+            // Assessment criteria
+            if (dayPlan.assessment_criteria) {
+                contentSections.push(`
+                    <section class="assessment-criteria">
+                        <h3>✅ Assessment Criteria</h3>
+                        <p>${dayPlan.assessment_criteria}</p>
+                    </section>
+                `);
+            }
+            
+            // Extension opportunities
+            if (dayPlan.extension_opportunities) {
+                contentSections.push(`
+                    <section class="extensions">
+                        <h3>🚀 Extensions & Further Learning</h3>
+                        <p>${dayPlan.extension_opportunities}</p>
+                    </section>
+                `);
+            }
+            
+            // Prerequisites
+            if (dayPlan.prerequisites) {
+                contentSections.push(`
+                    <section class="prerequisites">
+                        <h3>📋 Prerequisites</h3>
+                        <p>${dayPlan.prerequisites}</p>
+                    </section>
+                `);
+            }
+            
+            const contentHtml = contentSections.join('\n');
+            
+            // Create exercises from curriculum data
+            const exercises = [];
+            if (dayPlan.practical_application) {
+                exercises.push({
+                    type: 'reflection',
+                    prompt: `Reflect on how you can apply today's learning objective: "${dayPlan.primary_learning_objective}" in your current role.`,
+                    estimatedTime: 5
+                });
+            }
+            
             return {
                 id: `curriculum_day_${dayPlan.day}`,
                 title,
-                description: activePath.description || '',
+                description: `Day ${dayPlan.day} of your learning journey`,
                 objectives,
                 estimatedTime: minutes || 30,
                 content: contentHtml,
-                exercises: []
+                exercises,
+                source: 'curriculum',
+                dayNumber: dayPlan.day
             };
+        }
+
+        // Validate if content is worth caching
+        function isValidContentForCaching(content) {
+            if (!content) return false;
+            
+            // Content must have meaningful properties
+            if (typeof content !== 'object') return false;
+            
+            // Check for required content properties
+            const hasTitle = content.title && content.title.trim().length > 0;
+            const hasContent = content.content && content.content.trim().length > 0;
+            const hasId = content.id && content.id.trim().length > 0;
+            
+            // At minimum, content should have id, title, and some actual content
+            if (!hasId || !hasTitle) return false;
+            
+            // Check content isn't just empty or generic
+            if (!hasContent || content.content.trim() === '' || content.content === '<section></section>') {
+                return false;
+            }
+            
+            // Check objectives array if present
+            if (content.objectives && Array.isArray(content.objectives)) {
+                if (content.objectives.length === 0) return false;
+            }
+            
+            return true;
         }
 
         // Get user context for personalization

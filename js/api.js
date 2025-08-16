@@ -184,6 +184,42 @@
         return obj.toString();
     }
 
+    // Utility function to safely parse stringified JSON values in API responses
+    function parseStringifiedJsonRecursively(obj) {
+        if (obj === null || obj === undefined) return obj;
+        
+        if (typeof obj === 'string') {
+            // Try to parse if it looks like JSON (starts with { or [)
+            const trimmed = obj.trim();
+            if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+                (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                try {
+                    const parsed = JSON.parse(obj);
+                    // Recursively parse the parsed object in case it contains more stringified JSON
+                    return parseStringifiedJsonRecursively(parsed);
+                } catch (e) {
+                    // If parsing fails, return the original string
+                    return obj;
+                }
+            }
+            return obj;
+        }
+        
+        if (Array.isArray(obj)) {
+            return obj.map(item => parseStringifiedJsonRecursively(item));
+        }
+        
+        if (typeof obj === 'object') {
+            const result = {};
+            for (const [key, value] of Object.entries(obj)) {
+                result[key] = parseStringifiedJsonRecursively(value);
+            }
+            return result;
+        }
+        
+        return obj;
+    }
+
     // Cache management utilities
     const ApiCache = {
         // Default cache durations in milliseconds
@@ -491,13 +527,55 @@
                 }
                 return null;
             } catch (error) {
-                console.warn(`⚠️ Cache get error:`, error);
                 return null;
             }
         },
 
+        // Validate if response data is worth caching
+        isValidResponseForCaching(response) {
+            if (!response) return false;
+            
+            // Check for null, undefined, or empty basic types
+            if (response === null || response === undefined || response === '') {
+                return false;
+            }
+            
+            // Handle the proxy response format (with success property)
+            const actualData = response.data || response;
+            
+            // Check arrays - must have meaningful content
+            if (Array.isArray(actualData)) {
+                return actualData.length > 0;
+            }
+            
+            // Check objects - must have meaningful properties
+            if (typeof actualData === 'object') {
+                const keys = Object.keys(actualData);
+                if (keys.length === 0) return false;
+                
+                // Check for objects with only empty values
+                const hasNonEmptyValue = keys.some(key => {
+                    const value = actualData[key];
+                    if (value === null || value === undefined || value === '') return false;
+                    if (Array.isArray(value) && value.length === 0) return false;
+                    if (typeof value === 'object' && Object.keys(value).length === 0) return false;
+                    return true;
+                });
+                
+                return hasNonEmptyValue;
+            }
+            
+            // For primitive types (string, number, boolean), they're valid if not empty
+            return true;
+        },
+
         async set(cacheKey, response, endpoint) {
             try {
+                // Don't cache empty or meaningless responses
+                if (!this.isValidResponseForCaching(response)) {
+                    return false;
+                }
+                
                 // Ensure storage is initialized
                 if (!Growth90.Data.Storage.isInitialized()) {
                     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -519,7 +597,6 @@
                 // Verify storage worked by immediately retrieving
                 const verification = await Growth90.Data.Storage.getItem('contentCache', cacheKey);
                 if (!verification) {
-                    console.warn(`⚠️ Cache storage verification failed`);
                 }
                 
                 return true;
@@ -589,7 +666,6 @@
                         return cachedResponse;
                     }
                 } catch (cacheError) {
-                    console.warn(`⚠️ Cache check failed for ${endpoint}:`, cacheError);
                     // Continue with API request if cache fails
                 }
             }
@@ -655,7 +731,6 @@
                         try {
                             await ApiCache.set(cacheKey, responseData, endpoint);
                         } catch (cacheError) {
-                            console.warn(`⚠️ Failed to cache response for ${endpoint}:`, cacheError);
                             // Don't fail the request if caching fails
                         }
                     }
@@ -721,8 +796,11 @@
                     throw error;
                 }
                 
-                // Return the full proxy response (which includes success property for caching)
-                return result;
+                // Parse any stringified JSON values recursively in the response
+                const parsedResult = parseStringifiedJsonRecursively(result);
+                
+                // Return the parsed proxy response (which includes success property for caching)
+                return parsedResult;
             }
             
             return await response.text();
@@ -1409,26 +1487,22 @@
                     
                     
                     // First call - should miss cache
-                    console.time('First call (cache miss)');
                     try {
                         const response1 = await makeRequest(endpoint, {
                             method: 'POST',
                             data: testPayload,
                             cache: true
                         });
-                        console.timeEnd('First call (cache miss)');
                         
                         // Wait a moment
                         await new Promise(resolve => setTimeout(resolve, 100));
                         
                         // Second call - should hit cache
-                        console.time('Second call (cache hit)');
                         const response2 = await makeRequest(endpoint, {
                             method: 'POST',
                             data: testPayload,
                             cache: true
                         });
-                        console.timeEnd('Second call (cache hit)');
                         
                         const isCached = JSON.stringify(response1) === JSON.stringify(response2);
                         return { response1, response2, cached: isCached };

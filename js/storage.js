@@ -616,7 +616,33 @@
         const memoryCache = new Map();
         const maxMemoryCacheSize = 100; // Maximum number of items in memory cache
 
+        // Validate if value is worth caching
+        function isValidForCaching(value) {
+            if (value === null || value === undefined || value === '') {
+                return false;
+            }
+            
+            if (Array.isArray(value)) {
+                return value.length > 0;
+            }
+            
+            if (typeof value === 'object') {
+                const keys = Object.keys(value);
+                return keys.length > 0 && keys.some(key => {
+                    const val = value[key];
+                    return val !== null && val !== undefined && val !== '';
+                });
+            }
+            
+            return true;
+        }
+
         async function set(key, value, ttl = 3600000) { // Default 1 hour TTL
+            // Don't cache empty or meaningless values
+            if (!isValidForCaching(value)) {
+                return false;
+            }
+            
             const expiresAt = new Date(Date.now() + ttl).toISOString();
             
             // Store in memory cache

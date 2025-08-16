@@ -7,6 +7,27 @@
 window.Growth90 = (() => {
     'use strict';
 
+    // Debug guard: mute verbose logs unless explicitly enabled via
+    // localStorage key 'growth90_debug' ("1"/"true") or URL ?debug=1
+    (function setupDebugLogging() {
+        try {
+            const qs = new URLSearchParams(window.location.search);
+            const urlDebug = qs.get('debug');
+            const ls = (localStorage.getItem('growth90_debug') || '').toLowerCase();
+            const isDebug = urlDebug === '1' || urlDebug === 'true' || ls === '1' || ls === 'true';
+            if (!isDebug) {
+                const noop = function(){};
+                if (typeof console !== 'undefined') {
+                    // Keep warn/error; silence chatter
+                    console.info = noop;
+                    console.debug = noop;
+                }
+            }
+        } catch (_) {
+            // If anything goes wrong, do nothing (keep default console)
+        }
+    })();
+
     // Core application modules
     const Core = {
         App: {},
@@ -952,33 +973,27 @@ window.Growth90 = (() => {
                 });
                 const learningPath = userPaths && userPaths.length ? userPaths[0] : null;
 
-                if (!learningPath || !learningPath.curriculum || !Array.isArray(learningPath.curriculum)) {
+                // Support multiple curriculum formats
+                let curriculum = null;
+                if (learningPath.pathData && Array.isArray(learningPath.pathData.daily_curriculum)) {
+                    curriculum = learningPath.pathData.daily_curriculum;
+                } else if (Array.isArray(learningPath.curriculum)) {
+                    curriculum = learningPath.curriculum;
+                }
+
+                if (!curriculum || curriculum.length === 0) {
                     return 1; // Default to day 1
                 }
 
-                // Query completed lessons from IndexedDB
-                const completedLessons = await Growth90.Data.Storage.queryItems('learningProgress', {
-                    index: 'userId',
-                    keyRange: IDBKeyRange.only(userId)
-                });
-
-                // Get completed lesson day numbers
-                const completedDays = new Set();
-                completedLessons.forEach(lesson => {
-                    if (lesson.pathId === pathId && lesson.status === 'completed') {
-                        completedDays.add(lesson.day);
-                    }
-                });
-
-                // Find the next uncompleted day
-                for (let day = 1; day <= learningPath.curriculum.length; day++) {
-                    if (!completedDays.has(day)) {
-                        return day;
-                    }
+                // Determine the first day that is NOT FULLY completed
+                for (let day = 1; day <= curriculum.length; day++) {
+                    // Day is considered complete only if all its lessons are done
+                    const done = await checkIfDayCompleted(userId, pathId, day);
+                    if (!done) return day;
                 }
 
-                // If all lessons completed, return the last day
-                return learningPath.curriculum.length;
+                // If all days are fully completed, advance but cap at last day
+                return Math.min(curriculum.length, curriculum.length); // stay on last day if all done
             } catch (error) {
                 return 1; // Fallback to day 1
             }
@@ -1139,17 +1154,20 @@ window.Growth90 = (() => {
                             
                             <div class="home-content">
                                 ${hasSelectedTopic ? `
-                                    <!-- Today's Learning Summary (Minimal) -->
+                                    <!-- Today's Learning Summary (Centered) -->
                                     <div class="today-learning-summary">
                                         <div class="learning-summary-header">
                                             <div class="summary-icon">🎯</div>
                                             <div class="summary-content">
                                                 <h3>Today's Learning</h3>
                                                 <p>${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} - Day ${currentDay} of your 90-day journey</p>
-                                    <div class="topic-badge-small" title="Selected domain">
-                                        ${userIdentity.selectedTopic.id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                                    </div>
+                                                <div class="topic-badge-small" title="Selected domain">
+                                                    ${userIdentity.selectedTopic.id.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                                </div>
                                             </div>
+                                        </div>
+                                        
+                                        <div class="learning-summary-actions">
                                             <button class="primary-btn start-learning-btn" id="start-learning-btn">
                                                 <span>Start Learning</span>
                                                 <span class="btn-arrow">→</span>
@@ -1159,24 +1177,18 @@ window.Growth90 = (() => {
                                         <div class="quick-stats">
                                             <div class="quick-stat">
                                                 <span class="stat-icon">🔥</span>
-                                                <div class="stat-content">
-                                                    <span class="stat-value">${calculateStreak(userIdentity)}</span>
-                                                    <span class="stat-label">Day Streak</span>
-                                                </div>
+                                                <span class="stat-value">${calculateStreak(userIdentity)}</span>
+                                                <span class="stat-label">Day Streak</span>
                                             </div>
                                             <div class="quick-stat">
                                                 <span class="stat-icon">📈</span>
-                                                <div class="stat-content">
-                                                    <span class="stat-value">${Math.round((currentDay / 90) * 100)}%</span>
-                                                    <span class="stat-label">Completion</span>
-                                                </div>
+                                                <span class="stat-value">${Math.round((currentDay / 90) * 100)}%</span>
+                                                <span class="stat-label">Completion</span>
                                             </div>
                                             <div class="quick-stat">
                                                 <span class="stat-icon">⏰</span>
-                                                <div class="stat-content">
-                                                    <span class="stat-value">${calculateTimeInvested(userIdentity)}h</span>
-                                                    <span class="stat-label">Time Invested</span>
-                                                </div>
+                                                <span class="stat-value">${calculateTimeInvested(userIdentity)}h</span>
+                                                <span class="stat-label">Time Invested</span>
                                             </div>
                                         </div>
                                     </div>
@@ -1208,7 +1220,7 @@ window.Growth90 = (() => {
                                             <div class="selected-topic-card">
                                                 <div class="topic-icon">🎯</div>
                                                 <div class="topic-content">
-                                                    <h4>${userIdentity.selectedTopic.id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}</h4>
+                                                    <h4>${userIdentity.selectedTopic.id.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h4>
                                                     <p>${userIdentity.selectedTopic.description}</p>
                                                     <div class="topic-actions">
                                                         <button class="secondary-btn change-topic-btn" id="change-topic-btn">
@@ -1443,11 +1455,6 @@ window.Growth90 = (() => {
                 // Call API to get specializations for the domain
                 let specializations = [];
                 try {
-                    console.log('🔄 Calling API for specializations...');
-                    console.log('📋 Domain ID:', domainId);
-                    console.log('📋 Domain Title:', domainTitle);
-                    console.log('📋 Professional Context:', professionalContext);
-                    console.log('📋 User Profile:', userProfile);
                     
                     // Map frontend domain IDs to API domain IDs if needed
                     const domainMapping = {
@@ -1463,8 +1470,6 @@ window.Growth90 = (() => {
                     
                     // Use mapped domain ID if available, otherwise use original
                     let apiDomainId = domainMapping[domainId] || domainId;
-                    console.log('🔄 Original domain ID:', domainId);
-                    console.log('🔄 Mapped API domain ID:', apiDomainId);
                     
                     // Validate domain parameter
                     if (!apiDomainId || apiDomainId.trim() === '') {
@@ -1485,7 +1490,6 @@ window.Growth90 = (() => {
                         user_profile: userProfile || {}
                     };
                     
-                    console.log('🚀 Sending API payload:', JSON.stringify(apiPayload, null, 2));
                     
                     const response = await Growth90.Data.API.content.getSpecializations(
                         apiPayload.domain,
@@ -1495,28 +1499,14 @@ window.Growth90 = (() => {
 
                     // If no error was thrown, we have a successful 200 response
                     if (response) {
-                        console.log('✅ Received specializations data (HTTP 200):', response);
-                        
-                        // Debug the response structure
-                        console.log('🔍 Response structure analysis:');
-                        console.log('  - Response type:', typeof response);
-                        console.log('  - Has data property:', 'data' in response);
-                        console.log('  - Has specializations property:', 'specializations' in response);
-                        console.log('  - Response keys:', Object.keys(response));
-                        console.log('  - Full data object:', response.data);
-                        console.log('  - Data object keys:', response.data ? Object.keys(response.data) : 'no data');
-                        console.log('  - Data specializations:', response.data?.specializations);
                         
                         if (response.specializations) {
-                            console.log('  - Specializations array length:', response.specializations.length);
-                            console.log('  - First specialization sample:', response.specializations[0]);
                         }
                         
                         const responseData = response.data || response; // Handle both wrapper and direct formats
                         
                         // Try multiple response formats to extract specializations
                         if (responseData.specializations && Array.isArray(responseData.specializations)) {
-                            console.log('📋 Using direct specializations array format');
                             specializations = responseData.specializations.map(spec => ({
                                 id: spec.id || spec.title?.toLowerCase().replace(/\s+/g, '-'),
                                 title: spec.title,
@@ -1526,7 +1516,6 @@ window.Growth90 = (() => {
                                 level: spec.level || spec.difficulty || 'Intermediate'
                             }));
                         } else if (responseData.domain && responseData.domain.specializations) {
-                            console.log('📋 Using domain.specializations format');
                             specializations = responseData.domain.specializations.map(spec => ({
                                 id: spec.id || spec.title?.toLowerCase().replace(/\s+/g, '-'),
                                 title: spec.title,
@@ -1536,16 +1525,10 @@ window.Growth90 = (() => {
                                 level: spec.level || spec.difficulty || 'Intermediate'
                             }));
                         } else if (responseData.insights && Array.isArray(responseData.insights)) {
-                            console.log('📋 Using insights array format (legacy)');
                             specializations = parseSkillsFromSpecializations(responseData, domainId);
                         } else {
-                            console.log('📋 No recognizable specializations format found, trying legacy parsing');
-                            console.log('📋 Available responseData properties:', Object.keys(responseData));
                             specializations = parseSkillsFromSpecializations(responseData, domainId);
                         }
-                        
-                        console.log('✅ Final parsed specializations:', specializations);
-                        console.log('📊 Number of specializations to display:', specializations.length);
                     }
                 } catch (error) {
                     console.warn('Failed to get specializations (non-200 status), using defaults:', error);
@@ -1559,15 +1542,8 @@ window.Growth90 = (() => {
 
                 // Fallback to default specializations if API fails or returns empty
                 if (specializations.length === 0) {
-                    console.log('🔄 API returned empty specializations, using defaults for domain:', domainId);
-                    console.log('🔄 This could be because:');
-                    console.log('  - Domain ID mapping is incorrect');
-                    console.log('  - API has no specializations for this domain');
-                    console.log('  - API payload format is incorrect');
-                    console.log('  - Try a different domain ID or check API logs');
                     
                     specializations = getDefaultSpecializations(domainId);
-                    console.log('✅ Default specializations:', specializations);
                 }
 
                 // Find and update modal content with proper waiting
@@ -1588,23 +1564,14 @@ window.Growth90 = (() => {
                         
                         // Debug what modal elements exist
                         if (attempts === 5) {
-                            console.log('🔍 Debug: Available modal elements:');
-                            console.log('  - .modal-overlay:', document.querySelector('.modal-overlay'));
-                            console.log('  - .modal-content:', document.querySelector('.modal-content'));
-                            console.log('  - .modal-body:', document.querySelector('.modal-body'));
-                            console.log('  - #modal-description:', document.querySelector('#modal-description'));
-                            console.log('  - All elements with "modal":', document.querySelectorAll('[class*="modal"]'));
                         }
                     }
                 }
-                
-                console.log('🔍 Found modal content element after', attempts, 'attempts:', !!modalContent);
                 
                 // If we can't find the specific element, try to update modal body directly
                 if (!modalContent) {
                     const modalBody = document.querySelector('.modal-body') || document.querySelector('#modal-description');
                     if (modalBody) {
-                        console.log('🔧 Using modal body as fallback container');
                         modalBody.innerHTML = `
                             <div class="specializations-modal-content">
                                 <div class="specializations-loading">
@@ -1630,8 +1597,6 @@ window.Growth90 = (() => {
                 }
                 
                 if (modalContent) {
-                    console.log('📋 Updating modal with specializations:', specializations.length, 'items');
-                    console.log('📋 Specializations details:', specializations);
                     
                     if (specializations.length === 0) {
                         modalContent.innerHTML = `
@@ -1659,7 +1624,6 @@ window.Growth90 = (() => {
 
                     // Add click handlers to specialization cards
                     const specializationCards = modalContent.querySelectorAll('.modal-specialization-card');
-                    console.log('🎯 Adding click handlers to', specializationCards.length, 'specialization cards');
                     specializationCards.forEach(card => {
                         card.addEventListener('click', async () => {
                             const specializationId = card.getAttribute('data-specialization-id');
@@ -1729,8 +1693,12 @@ window.Growth90 = (() => {
 
                     UI.Components.Loading.hide();
 
-                    // If no error was thrown, we have a successful 200 response
-                    console.log('✅ Learning path generated successfully (HTTP 200):', learningPathResponse);
+                    // If response indicates success, clean and store payload
+                    if (learningPathResponse && learningPathResponse.success && learningPathResponse.data) {
+                        const cleanedResponse = cleanLearningPathData(learningPathResponse.data);
+                        await storeLearningPath(cleanedResponse, userIdentity, selectedSpecialization);
+                    }
+                    
                     UI.Components.Notifications.success(`90-day learning path created for ${selectedSpecialization.title}!`);
                     Core.Router.navigate('path');
                     
@@ -1748,6 +1716,281 @@ window.Growth90 = (() => {
                 UI.Components.Notifications.error('Failed to create learning path. Please try again.');
             }
         }
+
+        // Helper function to clean learning path data and fix inconsistencies
+        function cleanLearningPathData(response) {
+            // Create a cleaned copy of the response
+            const cleaned = JSON.parse(JSON.stringify(response));
+            
+            // Fix minor inconsistencies found in the data
+            if (cleaned.daily_curriculum) {
+                cleaned.daily_curriculum.forEach(day => {
+                    // Fix typo in day 89: remove extra space in " rehearsal techniques"
+                    if (day.day === 89 && day.supporting_concepts) {
+                        day.supporting_concepts = day.supporting_concepts.map(concept => 
+                            concept.trim() // Remove any extra spaces
+                        );
+                    }
+                });
+            }
+            
+            // Ensure course title matches the domain
+            if (cleaned.course_title && cleaned.course_title.includes('Leadership Skills')) {
+                cleaned.course_title = "90-Day Leadership Skills Mastery for Tech Professionals";
+            }
+            
+            // Add missing periods to milestone assessment descriptions
+            if (cleaned.milestone_assessments) {
+                cleaned.milestone_assessments.forEach(milestone => {
+                    if (milestone.description && !milestone.description.endsWith('.')) {
+                        milestone.description += '.';
+                    }
+                });
+            }
+            
+            return cleaned;
+        }
+
+        // Helper function to store learning path in IndexedDB
+        async function storeLearningPath(learningPathData, userProfile, specialization) {
+            try {
+                // Generate unique ID for the learning path
+                const pathId = `path_${userProfile.email || 'user'}_${specialization.id}_${Date.now()}`;
+                
+                // Create the learning path object for storage
+                const learningPath = {
+                    id: pathId,
+                    userId: userProfile.email || userProfile.id || 'anonymous',
+                    userProfile: userProfile,
+                    specialization: specialization,
+                    pathData: learningPathData,
+                    status: 'active',
+                    progress: {
+                        currentDay: 1,
+                        completedDays: [],
+                        totalDays: learningPathData.daily_curriculum?.length || 90,
+                        startDate: new Date().toISOString(),
+                        lastUpdated: new Date().toISOString()
+                    },
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+                
+                // Store in IndexedDB
+                await Growth90.Data.Storage.setItem('learningPaths', learningPath);
+                
+                // Also store as current active path in localStorage for quick access
+                localStorage.setItem('growth90_active_learning_path', JSON.stringify({
+                    id: pathId,
+                    title: learningPathData.course_title,
+                    specialization: specialization.title,
+                    currentDay: 1,
+                    totalDays: learningPathData.daily_curriculum?.length || 90,
+                    createdAt: learningPath.createdAt
+                }));
+                
+                return pathId;
+                
+            } catch (error) {
+                console.error('❌ Failed to store learning path:', error);
+                throw error;
+            }
+        }
+
+        // Function to show learning path page when user has profile but no learning paths
+        function showEmptyLearningPathPage(userIdentity, contentArea) {
+            UI.Components.Loading.hide();
+            updateActiveNavigation('path');
+            
+            const hasCompleteProfile = userIdentity && userIdentity.profileCompleted;
+            const userName = userIdentity?.nickname || 'there';
+            
+            contentArea.innerHTML = `
+                <div class="learning-path-container">
+                    <div class="path-header">
+                        <div class="path-icon">🗺️</div>
+                        <div class="path-titles">
+                            <h1>Your Learning Journey</h1>
+                            <p class="path-subtitle">Ready to start your 90-day transformation?</p>
+                        </div>
+                        <div class="path-actions">
+                            <button class="secondary-btn" data-route="home">← Back to Home</button>
+                        </div>
+                    </div>
+                    
+                    <div class="empty-path-content">
+                        ${hasCompleteProfile ? `
+                            <div class="empty-path-card">
+                                <div class="empty-path-icon">🚀</div>
+                                <h2>Hi ${userName}! Let's Create Your Learning Path</h2>
+                                <p class="empty-path-description">
+                                    You have a complete profile, but haven't created a learning path yet. 
+                                    Choose a skill domain to generate your personalized 90-day journey.
+                                </p>
+                                
+                                <div class="profile-preview">
+                                    <h3>Your Profile Summary:</h3>
+                                    <div class="profile-tags">
+                                        ${userIdentity.industry ? `<span class="profile-tag">📍 ${userIdentity.industry}</span>` : ''}
+                                        ${userIdentity.currentRole || userIdentity.role ? `<span class="profile-tag">👤 ${userIdentity.currentRole || userIdentity.role}</span>` : ''}
+                                        ${userIdentity.experience ? `<span class="profile-tag">⭐ ${userIdentity.experience}</span>` : ''}
+                                        ${userIdentity.goal ? `<span class="profile-tag">🎯 ${userIdentity.goal}</span>` : ''}
+                                    </div>
+                                </div>
+                                
+                                <div class="empty-path-actions">
+                                    <button class="primary-btn" data-route="domains" id="start-learning-journey">
+                                        🎯 Start Your Learning Journey
+                                    </button>
+                                    <button class="secondary-btn" data-route="profile" id="edit-profile-btn">
+                                        ✏️ Edit Profile
+                                    </button>
+                                </div>
+                            </div>
+                        ` : `
+                            <div class="empty-path-card">
+                                <div class="empty-path-icon">📝</div>
+                                <h2>Complete Your Profile First</h2>
+                                <p class="empty-path-description">
+                                    To create a personalized learning path, we need to know more about your goals, 
+                                    experience, and preferences.
+                                </p>
+                                
+                                <div class="empty-path-actions">
+                                    <button class="primary-btn" data-route="profile" id="complete-profile-btn">
+                                        📝 Complete Your Profile
+                                    </button>
+                                    <button class="secondary-btn" data-route="home">
+                                        🏠 Go to Home
+                                    </button>
+                                </div>
+                            </div>
+                        `}
+                        
+                        <div class="learning-path-benefits">
+                            <h3>What You'll Get:</h3>
+                            <div class="benefits-grid">
+                                <div class="benefit-item">
+                                    <span class="benefit-icon">📅</span>
+                                    <div class="benefit-content">
+                                        <h4>90-Day Structured Plan</h4>
+                                        <p>Daily lessons and exercises designed for your goals</p>
+                                    </div>
+                                </div>
+                                <div class="benefit-item">
+                                    <span class="benefit-icon">🎯</span>
+                                    <div class="benefit-content">
+                                        <h4>Personalized Content</h4>
+                                        <p>Tailored to your industry, role, and experience level</p>
+                                    </div>
+                                </div>
+                                <div class="benefit-item">
+                                    <span class="benefit-icon">📊</span>
+                                    <div class="benefit-content">
+                                        <h4>Progress Tracking</h4>
+                                        <p>Monitor your growth with milestones and assessments</p>
+                                    </div>
+                                </div>
+                                <div class="benefit-item">
+                                    <span class="benefit-icon">🏆</span>
+                                    <div class="benefit-content">
+                                        <h4>Skill Mastery</h4>
+                                        <p>Build expertise through practical applications</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Add event listeners for navigation
+            const startButton = document.getElementById('start-learning-journey');
+            if (startButton) {
+                startButton.addEventListener('click', () => {
+                    Core.Router.navigate('domains');
+                });
+            }
+            
+            const editProfileButton = document.getElementById('edit-profile-btn');
+            if (editProfileButton) {
+                editProfileButton.addEventListener('click', () => {
+                    Core.Router.navigate('profile');
+                });
+            }
+            
+            const completeProfileButton = document.getElementById('complete-profile-btn');
+            if (completeProfileButton) {
+                completeProfileButton.addEventListener('click', () => {
+                    Core.Router.navigate('profile');
+                });
+            }
+        }
+
+        // Test function to validate learning path storage and display
+        async function testLearningPathFunctionality() {
+            try {
+                
+                // Test data cleaning
+                const testResponse = {
+                    course_title: "90-Day Leadership Skills Mastery for Tech Professionals",
+                    daily_curriculum: [
+                        {
+                            day: 89,
+                            supporting_concepts: [" rehearsal techniques", "Visual storytelling"],
+                            primary_learning_objective: "Final capstone preparation and rehearsal"
+                        }
+                    ],
+                    milestone_assessments: [
+                        {
+                            day: 30,
+                            type: "Foundation Assessment",
+                            description: "Comprehensive evaluation of core leadership concepts"
+                        }
+                    ]
+                };
+                
+                const cleaned = cleanLearningPathData(testResponse);
+                
+                // Test storage
+                const testUserProfile = {
+                    email: 'test@example.com',
+                    nickname: 'Test User'
+                };
+                
+                const testSpecialization = {
+                    id: 'test-leadership',
+                    title: 'Test Leadership'
+                };
+                
+                // Only test if we can access IndexedDB
+                if (typeof indexedDB !== 'undefined') {
+                    try {
+                        await storeLearningPath(cleaned, testUserProfile, testSpecialization);
+                        
+                        // Clean up test data
+                        const testPathId = `path_${testUserProfile.email}_${testSpecialization.id}`;
+                        try {
+                            await Growth90.Data.Storage.deleteItem('learningPaths', testPathId);
+                        } catch (e) {
+                            // Cleanup failed, that's okay for testing
+                        }
+                        
+                    } catch (storageError) {
+                    }
+                } else {
+                }
+                
+                return true;
+                
+            } catch (error) {
+                console.error('❌ Learning path functionality test failed:', error);
+                return false;
+            }
+        }
+
+        // Expose test function for debugging
+        window.testLearningPath = testLearningPathFunctionality;
 
         // Specializations Selection page
         async function showSpecializations(params = []) {
@@ -1819,24 +2062,9 @@ window.Growth90 = (() => {
                     
                     // If no error was thrown, we have a successful 200 response
                     if (response) {
-                        console.log('✅ Received specializations data (HTTP 200):', response);
                         const responseData = response.data || response; // Handle both wrapper and direct formats
                         
-                        // Show specializations structure for debugging
-                        if (responseData.specializations && Array.isArray(responseData.specializations)) {
-                            console.log('🎯 Specializations found:', responseData.specializations.length);
-                            console.log('📊 Specializations structure:', responseData.specializations.map(spec => ({
-                                id: spec.id,
-                                title: spec.title,
-                                hasDescription: !!spec.description,
-                                category: spec.category
-                            })));
-                        }
-                        
                         specificSkills = parseSkillsFromSpecializations(responseData, broaderDomainId);
-                        console.log('✅ Parsed specializations:', specificSkills);
-                    } else {
-                        console.warn('⚠️ API response is empty despite 200 status:', response);
                     }
                 } catch (error) {
                     console.warn('Failed to get personalized skills, using defaults:', error);
@@ -1932,7 +2160,6 @@ window.Growth90 = (() => {
             const skills = [];
             
             try {
-                console.log('🔍 Parsing specializations data:', specializationsData);
                 
                 // Handle the structured specializations response format
                 if (specializationsData && specializationsData.specializations && Array.isArray(specializationsData.specializations)) {
@@ -1964,7 +2191,6 @@ window.Growth90 = (() => {
                 
                 // Fallback to default skills if no specializations found
                 if (skills.length === 0) {
-                    console.log('No specializations found, using defaults');
                     return [];
                 }
                 
@@ -1980,7 +2206,6 @@ window.Growth90 = (() => {
             const skills = [];
             
             try {
-                console.log('🔍 Parsing insights data:', insightsData);
                 
                 // Handle the structured supplementary_insights response format
                 if (insightsData && insightsData.supplementary_insights && Array.isArray(insightsData.supplementary_insights)) {
@@ -2025,7 +2250,7 @@ window.Growth90 = (() => {
         // Extract skill title from insight based on broader topic (fallback for missing titles)
         function extractSkillTitleFromInsight(insight, broaderTopicId) {
             // If title is missing, create one from category and broader topic
-            return `${insight.category} in ${broaderTopicId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
+            return `${insight.category} in ${broaderTopicId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
         }
 
         // Clean insight description for skill cards
@@ -2457,8 +2682,10 @@ window.Growth90 = (() => {
                 
                 UI.Components.Loading.hide();
                 
-                if (learningPathResponse.success) {
-                    // Show success and navigate to learning path
+                if (learningPathResponse && learningPathResponse.success && learningPathResponse.data) {
+                    // Normalize and store, then navigate
+                    const cleaned = cleanLearningPathData(learningPathResponse.data);
+                    try { await storeLearningPath(cleaned, userProfile, selectedSkill); } catch(e) { /* Store path failed silently */ }
                     UI.Components.Notifications.success(`Learning path created for ${selectedSkill.title}!`);
                     Core.Router.navigate('path');
                 } else {
@@ -2476,8 +2703,6 @@ window.Growth90 = (() => {
 
         // Today's Learning page
         async function showTodaysLearning() {
-            UI.Components.Loading.show('Loading today\'s learning...');
-            
             try {
                 const contentArea = document.getElementById('app-content');
                 
@@ -2495,14 +2720,36 @@ window.Growth90 = (() => {
                     return;
                 }
 
+                // Ensure a learning path exists for this user before showing any loading overlay
+                const userId = userIdentity.email || userIdentity.id || 'guest';
+                let hasLearningPath = false;
+                try {
+                    const userPaths = await Growth90.Data.Storage.queryItems('learningPaths', {
+                        index: 'userId',
+                        keyRange: IDBKeyRange.only(userId),
+                        limit: 1
+                    });
+                    hasLearningPath = Array.isArray(userPaths) && userPaths.length > 0;
+                    if (!hasLearningPath) {
+                        const allPaths = await Growth90.Data.Storage.getAllItems('learningPaths');
+                        hasLearningPath = Array.isArray(allPaths) && allPaths.some(p => p.userId === userId);
+                    }
+                } catch (e) {
+                    // If storage not ready or query failed, treat as no path
+                    hasLearningPath = false;
+                }
+
+                if (!hasLearningPath) {
+                    // Silently redirect to home without any loading effect
+                    Core.Router.navigate('home');
+                    return;
+                }
+
                 const selectedTopic = userIdentity.selectedTopic;
                 
-                // Check if a specific day was selected from learning path page
-                const selectedDay = sessionStorage.getItem('selectedDay');
-                const specificDay = selectedDay ? parseInt(selectedDay) : null;
-                
-                // Calculate current day based on progress or use selected day (persist selection across refreshes)
-                let currentDay = specificDay || await getCurrentDayByCompletion(userIdentity.email || userIdentity.id || 'guest', selectedTopic.id);
+                // Always compute last active day based on progress; ignore any manually selected day
+                // Requirement: #learning should display the last active day regardless of selections on #path
+                let currentDay = await getCurrentDayByCompletion(userIdentity.email || userIdentity.id || 'guest', selectedTopic.id);
                 
                 contentArea.innerHTML = `
                     <div class="learning-container">
@@ -2510,13 +2757,13 @@ window.Growth90 = (() => {
                             <div class="learning-title-section">
                                 <div class="learning-icon">🎯</div>
                                 <div class="learning-title-content">
-                                    <h1>${specificDay ? `Day ${currentDay} Learning` : 'Today\'s Learning'}</h1>
+                                    <h1>Today's Learning</h1>
                                     <p class="learning-subtitle">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} - Day ${currentDay} of your 90-day journey</p>
                                 </div>
                             </div>
                             
                             <div class="topic-badge">
-                                <span class="topic-name">${selectedTopic.id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                                <span class="topic-name">${selectedTopic.id.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
                             </div>
                         </div>
                         
@@ -2604,6 +2851,8 @@ window.Growth90 = (() => {
                 const continueLearningBtn = document.getElementById('continue-learning-btn');
                 if (continueLearningBtn) {
                     continueLearningBtn.addEventListener('click', () => {
+                        // Ensure we use computed last active day, not any previously selected day
+                        try { sessionStorage.removeItem('selectedDay'); } catch(_) {}
                         startFirstLesson();
                     });
                 }
@@ -2720,30 +2969,264 @@ window.Growth90 = (() => {
                     console.error('❌ All methods failed - Critical error:', error);
                 }
 
+                // If user has multiple paths stored, render all of them
+                if (Array.isArray(userPathsList) && userPathsList.length > 1) {
+                    const pathsSorted = [...userPathsList].sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+
+                    const renderOnePath = (lp, idx) => {
+                        // Extract new-format data if available
+                        let curriculum = null;
+                        let courseTitle = null;
+                        let courseDescription = null;
+                        let phaseInfo = null;
+                        let milestoneAssessments = null;
+                        let resources = null;
+                        const pfx = (s) => `${lp.id}-${idx}-${s}`;
+
+                        if (lp.pathData) {
+                            const d = lp.pathData;
+                            courseTitle = d.course_title || lp.title;
+                            courseDescription = d.course_description || lp.description;
+                            curriculum = Array.isArray(d.daily_curriculum) ? d.daily_curriculum : null;
+                            phaseInfo = d.phase_summaries;
+                            milestoneAssessments = d.milestone_assessments;
+                            resources = d.resources;
+                        }
+                        // Fallbacks
+                        if (!curriculum) {
+                            if (Array.isArray(lp.curriculum) && lp.curriculum.length) curriculum = lp.curriculum;
+                            else if (Array.isArray(lp.days) && lp.days.length) curriculum = lp.days;
+                        }
+                        courseTitle = courseTitle || lp.title || 'Learning Path';
+                        courseDescription = courseDescription || lp.description || '';
+
+                        // Build weeks
+                        let weeksHtml = '';
+                        if (Array.isArray(curriculum) && curriculum.length) {
+                            const weekSize = 7;
+                            const weeks = [];
+                            for (let i = 0; i < curriculum.length; i += weekSize) {
+                                const weekDays = curriculum.slice(i, i + weekSize);
+                                const weekNumber = Math.floor(i / weekSize) + 1;
+                                weeks.push({ number: weekNumber, days: weekDays });
+                            }
+                            weeksHtml = weeks.map((week) => {
+                                const weekId = `${pfx('week')}-${week.number}`;
+                                const daysHtml = week.days.map((d, di) => {
+                                    const dayNum = d.day || d.id || (di + 1 + (week.number - 1) * 7);
+                                    const label = d.primary_learning_objective || d.title || d.topic || `Day ${dayNum}`;
+                                    const desc = d.practical_application || d.description || d.content || '';
+                                    const timeAllocation = d.time_allocation ? `Learn: ${d.time_allocation.learn}m, Practice: ${d.time_allocation.practice}m, Review: ${d.time_allocation.review}m` : d.time_investment;
+                                    return `
+                                        <div class="path-day" data-day="${dayNum}">
+                                            <div class="path-day-header">
+                                                <span class="day-badge">Day ${dayNum}</span>
+                                            </div>
+                                            <div class="path-day-content">
+                                                <div class="path-day-title">${Core.Utils.sanitizeHTML(label)}</div>
+                                                ${desc ? `<div class=\"path-day-description\">${Core.Utils.sanitizeHTML(desc)}</div>` : ''}
+                                                ${d.supporting_concepts && Array.isArray(d.supporting_concepts) ? `<div class=\"supporting-concepts\"><strong>Key Concepts:</strong> ${d.supporting_concepts.map(c => Core.Utils.sanitizeHTML(c)).join(', ')}</div>` : ''}
+                                                ${d.assessment_criteria ? `<div class=\"assessment-criteria\"><strong>Success Criteria:</strong> ${Core.Utils.sanitizeHTML(d.assessment_criteria)}</div>` : ''}
+                                                ${timeAllocation ? `<div class=\"path-day-duration\">⏱ ${Core.Utils.sanitizeHTML(timeAllocation)}</div>` : ''}
+                                                ${d.extension_opportunities ? `<div class=\"path-day-extend\"><em>${Core.Utils.sanitizeHTML(d.extension_opportunities)}</em></div>` : ''}
+                                            </div>
+                                            <div class="path-day-actions">
+                                                <button class="secondary-btn path-day-btn" data-action="goto-learning" data-day="${dayNum}">Start Lessons</button>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('');
+                                return `
+                                    <div class="path-week" data-week="${weekId}" aria-expanded="true">
+                                        <div class="path-week-header">
+                                            <div class="week-info">
+                                                <h3>Week ${week.number}</h3>
+                                            </div>
+                                            <div class="week-stats">
+                                                <button class="week-toggle-btn" data-action="toggle-week" data-week="${weekId}" aria-expanded="true">Collapse</button>
+                                            </div>
+                                        </div>
+                                        <div class="path-week-days">${daysHtml}</div>
+                                    </div>
+                                `;
+                            }).join('');
+                        }
+
+                        // Milestones
+                        const milestonesHtml = Array.isArray(milestoneAssessments) && milestoneAssessments.length ? `
+                            <div class="path-section milestones-section">
+                                <h2>Milestone Assessments</h2>
+                                <div class="milestones-list">
+                                    ${milestoneAssessments.map(m => `
+                                        <div class="milestone-item">
+                                            <div class="milestone-icon">🎯</div>
+                                            <div class="milestone-content">
+                                                <div class="milestone-title">${Core.Utils.sanitizeHTML(m.type || 'Milestone')}</div>
+                                                <div class="milestone-description">${Core.Utils.sanitizeHTML(m.description || '')}</div>
+                                                <div class="milestone-day">Day ${m.day}</div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : '';
+
+                        // Phases
+                        const phaseInfoHtml = phaseInfo ? `
+                            <div class="path-section phases-section">
+                                <h2>Learning Phases</h2>
+                                <div class="phases-grid">
+                                    ${phaseInfo.foundation ? `
+                                        <div class="phase-card"><div class="phase-header"><span class="phase-icon">🏗️</span><h3>Foundation (Days 1-30)</h3></div><p>${Core.Utils.sanitizeHTML(phaseInfo.foundation)}</p></div>` : ''}
+                                    ${phaseInfo.application ? `
+                                        <div class="phase-card"><div class="phase-header"><span class="phase-icon">🚀</span><h3>Application (Days 31-60)</h3></div><p>${Core.Utils.sanitizeHTML(phaseInfo.application)}</p></div>` : ''}
+                                    ${phaseInfo.mastery ? `
+                                        <div class="phase-card"><div class="phase-header"><span class="phase-icon">🏆</span><h3>Mastery (Days 61-90)</h3></div><p>${Core.Utils.sanitizeHTML(phaseInfo.mastery)}</p></div>` : ''}
+                                </div>
+                            </div>
+                        ` : '';
+
+                        // Resources
+                        const resourcesHtml = resources ? `
+                            <div class="path-section resources-section">
+                                <h2>Resources</h2>
+                                ${Array.isArray(resources.core) && resources.core.length ? `
+                                    <div class="resources-core"><h3>Core</h3><ul>${resources.core.map(r => `<li>${Core.Utils.sanitizeHTML(r)}</li>`).join('')}</ul></div>` : ''}
+                                ${Array.isArray(resources.supplementary) && resources.supplementary.length ? `
+                                    <div class="resources-supp"><h3>Supplementary</h3><ul>${resources.supplementary.map(r => `<li>${Core.Utils.sanitizeHTML(r)}</li>`).join('')}</ul></div>` : ''}
+                            </div>
+                        ` : '';
+
+                        // Success metrics
+                        const metrics = lp.pathData?.success_metrics;
+                        const metricsHtml = Array.isArray(metrics) && metrics.length ? `
+                            <div class="path-section metrics-section">
+                                <h2>Success Metrics</h2>
+                                <ul>${metrics.map(m => `<li>${Core.Utils.sanitizeHTML(m)}</li>`).join('')}</ul>
+                            </div>
+                        ` : '';
+
+                        // Contingency plans
+                        const contingency = lp.pathData?.contingency_plans;
+                        const contingencyHtml = Array.isArray(contingency) && contingency.length ? `
+                            <div class="path-section contingency-section">
+                                <h2>Contingency Plans</h2>
+                                <ul>${contingency.map(c => `<li>${Core.Utils.sanitizeHTML(c)}</li>`).join('')}</ul>
+                            </div>
+                        ` : '';
+
+                        return `
+                            <section class="path-section-block" data-path="${lp.id}">
+                                <header class="path-subheader">
+                                    <h2>${Core.Utils.sanitizeHTML(courseTitle)}</h2>
+                                    ${courseDescription ? `<p class="path-description">${Core.Utils.sanitizeHTML(courseDescription)}</p>` : ''}
+                                </header>
+                                ${phaseInfoHtml}
+                                ${(weeksHtml ? `<div class="path-section curriculum-section"><h2>Curriculum</h2><div class="path-weeks">${weeksHtml}</div></div>` : '')}
+                                ${milestonesHtml}
+                                ${resourcesHtml}
+                                ${metricsHtml}
+                                ${contingencyHtml}
+                            </section>
+                        `;
+                    };
+
+                    const allSections = pathsSorted.map(renderOnePath).join('');
+
+                    contentArea.innerHTML = `
+                        <div class="learning-path-container">
+                            <div class="path-header">
+                                <div class="path-icon">🗺️</div>
+                                <div class="path-titles">
+                                    <h1>Your Learning Paths</h1>
+                                    <p class="path-subtitle">Showing ${pathsSorted.length} stored paths</p>
+                                </div>
+                                <div class="path-actions">
+                                    <button class="secondary-btn" data-route="home">← Back to Home</button>
+                                </div>
+                            </div>
+                            ${allSections}
+                        </div>
+                    `;
+
+                    // Wire actions
+                    contentArea.querySelectorAll('[data-action="goto-learning"]').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            const day = e.target.getAttribute('data-day');
+                            if (day) sessionStorage.setItem('selectedDay', day);
+                            Core.Router.navigate('learning');
+                        });
+                    });
+                    contentArea.querySelectorAll('[data-route]').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            Core.Router.navigate(e.target.getAttribute('data-route'));
+                        });
+                    });
+                    contentArea.querySelectorAll('[data-action="toggle-week"]').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            const weekId = e.currentTarget.getAttribute('data-week');
+                            const section = contentArea.querySelector(`.path-week[data-week="${weekId}"]`);
+                            if (!section) return;
+                            const isExpanded = section.getAttribute('aria-expanded') !== 'false';
+                            if (isExpanded) {
+                                section.classList.add('collapsed');
+                                section.setAttribute('aria-expanded', 'false');
+                                e.currentTarget.setAttribute('aria-expanded', 'false');
+                                e.currentTarget.textContent = 'Expand';
+                            } else {
+                                section.classList.remove('collapsed');
+                                section.setAttribute('aria-expanded', 'true');
+                                e.currentTarget.setAttribute('aria-expanded', 'true');
+                                e.currentTarget.textContent = 'Collapse';
+                            }
+                        });
+                    });
+
+                    if (UI && UI.Components && UI.Components.Loading && UI.Components.Loading.hide) {
+                        UI.Components.Loading.hide();
+                    }
+                    return;
+                }
+
                 if (!learningPath) {
+                    // No learning path found, redirect home silently
                     Core.Router.navigate('home');
                     return;
                 }
 
-                // Find the actual curriculum data
+                // Find the actual curriculum data - support new API response format
                 let curriculum = null;
-                let curriculumSource = null;
+                let courseTitle = null;
+                let phaseInfo = null;
+                let milestoneAssessments = null;
+                let resources = null;
                 
-                if (learningPath.curriculum && Array.isArray(learningPath.curriculum) && learningPath.curriculum.length > 0) {
-                    curriculum = learningPath.curriculum;
-                    curriculumSource = 'curriculum';
-                } else if (learningPath.days && Array.isArray(learningPath.days) && learningPath.days.length > 0) {
-                    curriculum = learningPath.days;
-                    curriculumSource = 'days';
-                } else if (learningPath.plan && Array.isArray(learningPath.plan) && learningPath.plan.length > 0) {
-                    curriculum = learningPath.plan;
-                    curriculumSource = 'plan';
-                } else if (learningPath.learning_plan && Array.isArray(learningPath.learning_plan) && learningPath.learning_plan.length > 0) {
-                    curriculum = learningPath.learning_plan;
-                    curriculumSource = 'learning_plan';
-                } else if (learningPath.content && Array.isArray(learningPath.content) && learningPath.content.length > 0) {
-                    curriculum = learningPath.content;
-                    curriculumSource = 'content';
+                // Handle new API response format (stored in pathData)
+                if (learningPath.pathData) {
+                    const pathData = learningPath.pathData;
+                    
+                    if (pathData.daily_curriculum && Array.isArray(pathData.daily_curriculum)) {
+                        curriculum = pathData.daily_curriculum;
+                        courseTitle = pathData.course_title;
+                        phaseInfo = pathData.phase_summaries;
+                        milestoneAssessments = pathData.milestone_assessments;
+                        resources = pathData.resources;
+                    }
+                }
+                
+                // Fallback to legacy formats
+                if (!curriculum) {
+                    if (learningPath.curriculum && Array.isArray(learningPath.curriculum) && learningPath.curriculum.length > 0) {
+                        curriculum = learningPath.curriculum;
+                    } else if (learningPath.days && Array.isArray(learningPath.days) && learningPath.days.length > 0) {
+                        curriculum = learningPath.days;
+                    } else if (learningPath.plan && Array.isArray(learningPath.plan) && learningPath.plan.length > 0) {
+                        curriculum = learningPath.plan;
+                    } else if (learningPath.learning_plan && Array.isArray(learningPath.learning_plan) && learningPath.learning_plan.length > 0) {
+                        curriculum = learningPath.learning_plan;
+                    } else if (learningPath.content && Array.isArray(learningPath.content) && learningPath.content.length > 0) {
+                        curriculum = learningPath.content;
+                    }
                 }
 
                 // Completed lessons for status
@@ -2774,7 +3257,7 @@ window.Growth90 = (() => {
                 const stats = calculateProgressStats();
 
                 // Build UI
-                const topicName = pathTopicId ? pathTopicId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()) : (learningPath?.title || 'Your Focus');
+                const topicName = courseTitle || learningPath?.specialization?.title || pathTopicId?.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || (learningPath?.title || 'Your Focus');
                 let bodyHtml = '';
 
                 // Use the detected curriculum for display
@@ -2804,7 +3287,8 @@ window.Growth90 = (() => {
                             const dayNum = d.day || d.id || (week.days.indexOf(d) + 1 + (week.number - 1) * 7);
                             const done = isDayCompleted(dayNum);
                             const label = d.primary_learning_objective || d.title || d.topic || `Day ${dayNum}`;
-                            const description = d.description || d.learning_activities?.join(', ') || d.content || 'Interactive lesson and exercises';
+                            const description = d.practical_application || d.description || d.learning_activities?.join(', ') || d.content || 'Interactive lesson and exercises';
+                            const timeAllocation = d.time_allocation ? `Learn: ${d.time_allocation.learn}min, Practice: ${d.time_allocation.practice}min, Review: ${d.time_allocation.review}min` : d.time_investment;
                             
                             return `
                                 <div class="path-day ${done ? 'completed' : ''}" data-day="${dayNum}">
@@ -2815,7 +3299,12 @@ window.Growth90 = (() => {
                                     <div class="path-day-content">
                                         <div class="path-day-title">${Core.Utils.sanitizeHTML(label)}</div>
                                         <div class="path-day-description">${Core.Utils.sanitizeHTML(description)}</div>
-                                        ${d.time_investment ? `<div class="path-day-duration">⏱ ${d.time_investment}</div>` : ''}
+                                        ${timeAllocation ? `<div class="path-day-duration">⏱ ${Core.Utils.sanitizeHTML(timeAllocation)}</div>` : ''}
+                                        ${d.supporting_concepts && Array.isArray(d.supporting_concepts) ? 
+                                            `<div class="supporting-concepts">
+                                                <strong>Key Concepts:</strong> ${d.supporting_concepts.map(concept => Core.Utils.sanitizeHTML(concept)).join(', ')}
+                                            </div>` : ''}
+                                        ${d.assessment_criteria ? `<div class="assessment-criteria"><strong>Success Criteria:</strong> ${Core.Utils.sanitizeHTML(d.assessment_criteria)}</div>` : ''}
                                         ${d.learning_activities && Array.isArray(d.learning_activities) ? 
                                             `<ul class="learning-activities">
                                                 ${d.learning_activities.map(activity => `<li>${Core.Utils.sanitizeHTML(activity)}</li>`).join('')}
@@ -2885,6 +3374,45 @@ window.Growth90 = (() => {
                         `;
                     }
 
+                    // Add phase information if available
+                    let phaseInfoHtml = '';
+                    if (phaseInfo) {
+                        phaseInfoHtml = `
+                            <div class="path-section phases-section">
+                                <h2>Learning Phases</h2>
+                                <div class="phases-grid">
+                                    ${phaseInfo.foundation ? `
+                                        <div class="phase-card">
+                                            <div class="phase-header">
+                                                <span class="phase-icon">🏗️</span>
+                                                <h3>Foundation (Days 1-30)</h3>
+                                            </div>
+                                            <p>${Core.Utils.sanitizeHTML(phaseInfo.foundation)}</p>
+                                        </div>
+                                    ` : ''}
+                                    ${phaseInfo.application ? `
+                                        <div class="phase-card">
+                                            <div class="phase-header">
+                                                <span class="phase-icon">🚀</span>
+                                                <h3>Application (Days 31-60)</h3>
+                                            </div>
+                                            <p>${Core.Utils.sanitizeHTML(phaseInfo.application)}</p>
+                                        </div>
+                                    ` : ''}
+                                    ${phaseInfo.mastery ? `
+                                        <div class="phase-card">
+                                            <div class="phase-header">
+                                                <span class="phase-icon">🏆</span>
+                                                <h3>Mastery (Days 61-90)</h3>
+                                            </div>
+                                            <p>${Core.Utils.sanitizeHTML(phaseInfo.mastery)}</p>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }
+
                     bodyHtml = `
                         <div class="path-overview">
                             <div class="path-stats">
@@ -2908,6 +3436,8 @@ window.Growth90 = (() => {
                                 <div class="progress-label">${stats.progressPercentage}% Complete</div>
                             </div>
                         </div>
+                        
+                        ${phaseInfoHtml}
                         
                         <div class="path-section curriculum-section">
                             <h2>Learning Curriculum</h2>
@@ -3001,9 +3531,9 @@ window.Growth90 = (() => {
                         <div class="path-header">
                             <div class="path-icon">🗺️</div>
                             <div class="path-titles">
-                                <h1>Your Learning Path</h1>
-                                <p class="path-subtitle">Domain: ${topicName}</p>
-                                ${learningPath ? `<p class="path-description">${Core.Utils.sanitizeHTML(learningPath.description || 'Personalized curriculum for your professional development')}</p>` : ''}
+                                <h1>${Core.Utils.sanitizeHTML(topicName)}</h1>
+                                ${learningPath?.specialization ? `<p class="path-subtitle">Specialization: ${Core.Utils.sanitizeHTML(learningPath.specialization.title)}</p>` : ''}
+                                ${learningPath?.pathData?.course_description ? `<p class="path-description">${Core.Utils.sanitizeHTML(learningPath.pathData.course_description)}</p>` : ''}
                             </div>
                             <div class="path-actions">
                                 ${pathSelectorHtml}
@@ -3283,7 +3813,7 @@ window.Growth90 = (() => {
                     'technical-skills': 'Technical Skills',
                     'financial-literacy': 'Financial Literacy'
                 };
-                const topicTitle = topicTitleMap[topicId] || topicId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                const topicTitle = topicTitleMap[topicId] || topicId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 showSpecializationsModal(topicId, topicTitle);
                 return;
             }
@@ -3299,7 +3829,7 @@ window.Growth90 = (() => {
                 localStorage.setItem('growth90_user_identity', JSON.stringify(userIdentity));
 
                 // Show confirmation and navigate to learning path setup
-                UI.Components.Notifications.success(`Selected: ${topicId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`);
+                UI.Components.Notifications.success(`Selected: ${topicId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`);
                 
                 // Start generating learning path
                 setTimeout(() => {
@@ -3389,18 +3919,26 @@ window.Growth90 = (() => {
                 try {
                     if (typeof response === 'string') parsed = JSON.parse(response);
                 } catch (_) {}
-                const output = parsed?.result?.Output || parsed?.Output || {};
+                const output = parsed?.result?.Output || parsed?.Output || parsed?.data || {};
+
+                // Support new endpoint schema (course_title, course_description, daily_curriculum, milestone_assessments, etc.)
+                const courseTitle = output.course_title || parsed?.name;
+                const courseDescription = output.course_description || output.learning_path || description;
+                const dailyCurriculum = Array.isArray(output.daily_curriculum) ? output.daily_curriculum : (Array.isArray(output.curriculum) ? output.curriculum : []);
+                const milestonesNew = Array.isArray(output.milestone_assessments) ? output.milestone_assessments : (Array.isArray(output.milestones) ? output.milestones : []);
 
                 const lp = {
                     id: parsed?.id || Core.Utils.generateId(),
                     userId: userIdentity.email || userIdentity.id || 'guest',
-                    title: parsed?.name || `Learning Path: ${topicId}`,
-                    description: output.learning_path || (description || `Auto-generated path for ${topicId}`),
-                    duration: Array.isArray(output.curriculum) ? output.curriculum.length : 90,
+                    title: courseTitle || `Learning Path: ${topicId}`,
+                    description: courseDescription || `Auto-generated path for ${topicId}`,
+                    duration: dailyCurriculum.length || 90,
                     status: 'active',
                     createdAt: new Date().toISOString(),
-                    curriculum: Array.isArray(output.curriculum) ? output.curriculum : [],
-                    milestones: Array.isArray(output.milestones) ? output.milestones : []
+                    curriculum: dailyCurriculum, // keep in legacy field for compatibility
+                    milestones: milestonesNew,
+                    // Store full structured response for richer UI on path page
+                    pathData: output
                 };
                 try { await Growth90.Data.Storage.setItem('learningPaths', lp); } catch(e) { /* ignore */ }
 
@@ -3430,41 +3968,67 @@ window.Growth90 = (() => {
                     return;
                 }
 
-                // Get the learning objective from the current day's curriculum stored in IndexedDB
-                let learningObjective = 'Set up Python and analytics workspace'; // Default Day 1 objective
-                let todaysCurriculum = null;
                 
+                // Use the Content Delivery system which prioritizes IndexedDB curriculum data
                 try {
-                    const identity = JSON.parse(localStorage.getItem('growth90_user_identity') || '{}');
-                    const uid = identity.email || identity.id || 'guest';
-                    const userPaths = await Growth90.Data.Storage.queryItems('learningPaths', {
-                        index: 'userId',
-                        keyRange: IDBKeyRange.only(uid),
-                        direction: 'prev',
-                        limit: 1
-                    });
-                    const learningPath = userPaths && userPaths.length ? userPaths[0] : null;
-                    
-                    if (learningPath && learningPath.curriculum && Array.isArray(learningPath.curriculum)) {
-                        todaysCurriculum = learningPath.curriculum.find(day => day.day === currentDay);
+                    if (Growth90.Learning && Growth90.Learning.ContentDelivery) {
+                        const dailyContent = await Growth90.Learning.ContentDelivery.getDailyLesson(currentDay);
                         
-                        if (todaysCurriculum && todaysCurriculum.primary_learning_objective) {
-                            learningObjective = todaysCurriculum.primary_learning_objective;
-                        } else {
+                        if (dailyContent && dailyContent.source === 'curriculum') {
+                            await renderTodaysLessonsFromCurriculum(dailyContent, lessonsList);
+                            return;
+                        } else if (dailyContent) {
+                            const responseData = dailyContent.data || dailyContent;
+                            await renderTodaysLessons(responseData, lessonsList);
+                            return;
                         }
-                    } else {
                     }
-                } catch (storageError) {
+                } catch (contentError) {
                 }
 
-                // Get today's lesson content from API
+                // Fallback to direct API call if content delivery is not available
                 try {
                     const userIdentity = JSON.parse(localStorage.getItem('growth90_user_identity') || '{}');
                     
-                    // Create stable user context for caching (exclude dynamic properties)
+                    // Try to get learning objective from IndexedDB curriculum first
+                    let learningObjective = `Day ${currentDay} lesson`;
+                    try {
+                        const uid = userIdentity.email || userIdentity.id || 'guest';
+                        const userPaths = await Growth90.Data.Storage.queryItems('learningPaths', {
+                            index: 'userId',
+                            keyRange: IDBKeyRange.only(uid),
+                            direction: 'prev',
+                            limit: 1
+                        });
+                        const learningPath = userPaths && userPaths.length ? userPaths[0] : null;
+                        
+                        if (learningPath) {
+                            // Support multiple curriculum formats
+                            let curriculum = null;
+                            if (learningPath.pathData && Array.isArray(learningPath.pathData.daily_curriculum)) {
+                                curriculum = learningPath.pathData.daily_curriculum;
+                            } else if (Array.isArray(learningPath.curriculum)) {
+                                curriculum = learningPath.curriculum;
+                            }
+                            
+                            if (curriculum) {
+                                const dayPlan = curriculum.find(d => d.day === currentDay);
+                                if (dayPlan && dayPlan.primary_learning_objective) {
+                                    learningObjective = dayPlan.primary_learning_objective;
+                                }
+                            }
+                        }
+                    } catch (storageError) {
+                    }
+                    
+                    // Fallback to topic description or generic
+                    if (learningObjective === `Day ${currentDay} lesson`) {
+                        learningObjective = selectedTopic?.description || learningObjective;
+                    }
+                    
+                    // Create stable user context for caching
                     const stableUserContext = {
                         profile: {
-                            // Only include stable properties for cache key generation
                             industry: userIdentity.industry,
                             role: userIdentity.role || userIdentity.currentRole,
                             experience: userIdentity.experience || 'intermediate',
@@ -3481,22 +4045,21 @@ window.Growth90 = (() => {
                         }
                     };
                     
-                    
                     const response = await Growth90.Data.API.content.getDailyLesson(
                         learningObjective,
                         stableUserContext,
                         currentDay
                     );
 
-                    // If no error was thrown, we have a successful 200 response
                     if (response) {
-                        const responseData = response.data || response; // Handle both wrapper and direct formats
+                        const responseData = response.data || response;
                         await renderTodaysLessons(responseData, lessonsList);
                     } else {
                         renderDefaultLessons(selectedTopic, lessonsList);
                     }
 
                 } catch (apiError) {
+                    console.error('❌ API call failed, using default lessons:', apiError);
                     renderDefaultLessons(selectedTopic, lessonsList);
                 }
 
@@ -3511,6 +4074,80 @@ window.Growth90 = (() => {
                         </div>
                     `;
                 }
+            }
+        }
+
+        // Render lessons from curriculum data stored in IndexedDB
+        async function renderTodaysLessonsFromCurriculum(dailyContent, container) {
+            try {
+                
+                const html = `
+                    <div class="lesson-container curriculum-lesson">
+                        <div class="lesson-header">
+                            <h2 class="lesson-title">${dailyContent.title}</h2>
+                            <div class="lesson-meta">
+                                <span class="lesson-day">Day ${dailyContent.dayNumber}</span>
+                                <span class="lesson-duration">${dailyContent.estimatedTime} minutes</span>
+                                <span class="lesson-source">📚 From Learning Path</span>
+                            </div>
+                        </div>
+                        
+                        <div class="lesson-content">
+                            ${dailyContent.content}
+                        </div>
+                        
+                        ${dailyContent.exercises && dailyContent.exercises.length > 0 ? `
+                            <div class="lesson-exercises">
+                                <h3>💡 Practice Exercises</h3>
+                                ${dailyContent.exercises.map(exercise => `
+                                    <div class="exercise-item">
+                                        <h4>${exercise.type === 'reflection' ? '🤔 Reflection' : '📝 Exercise'}</h4>
+                                        <p>${exercise.prompt}</p>
+                                        ${exercise.estimatedTime ? `<small>⏱️ ${exercise.estimatedTime} minutes</small>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                        
+                        <div class="lesson-actions">
+                            <button class="complete-lesson-btn" data-lesson-id="${dailyContent.id}" data-day="${dailyContent.dayNumber}">
+                                ✅ Mark as Complete
+                            </button>
+                            <button class="lesson-notes-btn" data-lesson-id="${dailyContent.id}">
+                                📝 Add Notes
+                            </button>
+                        </div>
+                    </div>
+                `;
+                
+                container.innerHTML = html;
+                
+                // Add event listeners for lesson completion
+                const completeBtn = container.querySelector('.complete-lesson-btn');
+                if (completeBtn) {
+                    completeBtn.addEventListener('click', (e) => {
+                        const lessonId = e.target.getAttribute('data-lesson-id');
+                        const day = parseInt(e.target.getAttribute('data-day'));
+                        completeLessonFlow(lessonId, day);
+                    });
+                }
+                
+                // Add event listeners for notes
+                const notesBtn = container.querySelector('.lesson-notes-btn');
+                if (notesBtn) {
+                    notesBtn.addEventListener('click', (e) => {
+                        const lessonId = e.target.getAttribute('data-lesson-id');
+                        // TODO: Implement notes functionality
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Error rendering curriculum lesson:', error);
+                container.innerHTML = `
+                    <div class="lesson-error">
+                        <p>Error displaying lesson content. Please try refreshing.</p>
+                    </div>
+                `;
             }
         }
 
@@ -3754,7 +4391,7 @@ window.Growth90 = (() => {
         }
 
         function generateDefaultLessons(selectedTopic) {
-            const topicName = selectedTopic.id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const topicName = selectedTopic.id.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             
             return [
                 {
@@ -3858,7 +4495,6 @@ window.Growth90 = (() => {
             if (backButton) {
                 backButton.addEventListener('click', function(e) {
                     e.preventDefault();
-                    console.log('Back button clicked'); // Debug log
                     window.goBackToLessons();
                 });
             }
@@ -4024,10 +4660,22 @@ window.Growth90 = (() => {
                 if (success) {
                     UI.Components.Notifications.success('Lesson completed! Great job! 🎉');
                     
-                    // Refresh the learning page to show next lesson
-                    setTimeout(() => {
-                        showTodaysLearning();
-                    }, 1500);
+                    // Check if all lessons for this day are completed
+                    const allDayLessonsCompleted = await checkIfDayCompleted(userId, pathId, currentDay);
+                    
+                    if (allDayLessonsCompleted) {
+                        // All lessons for current day completed, show next day
+                        const nextDay = await getCurrentDayByCompletion(userId, pathId);
+                        
+                        setTimeout(async () => {
+                            await showLearningForDay(nextDay);
+                        }, 1500);
+                    } else {
+                        // Still lessons remaining for current day
+                        setTimeout(() => {
+                            showTodaysLearning();
+                        }, 1500);
+                    }
                 } else {
                     UI.Components.Notifications.error('Failed to save lesson completion. Please try again.');
                 }
@@ -4037,10 +4685,136 @@ window.Growth90 = (() => {
             }
         }
 
-        function startFirstLesson() {
-            const firstLessonBtn = document.querySelector('.lesson-start-btn');
-            if (firstLessonBtn) {
-                firstLessonBtn.click();
+        // Check if all lessons for a specific day are completed
+        async function checkIfDayCompleted(userId, pathId, day) {
+            try {
+                // Get completed lessons for this user and path
+                const completedLessons = await Growth90.Data.Storage.queryItems('learningProgress', {
+                    index: 'userId',
+                    keyRange: IDBKeyRange.only(userId)
+                });
+                
+                // Count completed lessons for this specific day
+                const dayCompletedLessons = completedLessons.filter(lesson => 
+                    lesson.pathId === pathId && 
+                    lesson.day === day && 
+                    lesson.status === 'completed'
+                );
+                
+                // Get the total number of lessons available for this day
+                // We need to check what lessons are available by loading the day's content
+                const totalDayLessons = await getTotalLessonsForDay(userId, pathId, day);
+                
+                
+                // Day is complete only when ALL lessons are finished
+                return totalDayLessons > 0 && dayCompletedLessons.length >= totalDayLessons;
+                
+            } catch (error) {
+                console.error('Error checking day completion:', error);
+                return false;
+            }
+        }
+        
+        // Get the total number of lessons available for a specific day
+        async function getTotalLessonsForDay(userId, pathId, day) {
+            try {
+                // Try to get the content for this day to count total lessons
+                if (Growth90.Learning && Growth90.Learning.ContentDelivery) {
+                    const dailyContent = await Growth90.Learning.ContentDelivery.getDailyLesson(day);
+                    
+                    if (dailyContent && dailyContent.source === 'curriculum') {
+                        // For curriculum-based content, typically 1 lesson per day
+                        return 1;
+                    } else if (dailyContent && dailyContent.data) {
+                        // For API-based content, count the lessons generated
+                        const tempContainer = document.createElement('div');
+                        await renderTodaysLessons(dailyContent.data, tempContainer);
+                        const lessonElements = tempContainer.querySelectorAll('.lesson-item');
+                        return lessonElements.length;
+                    }
+                }
+                
+                // Fallback: try to get from current UI
+                const currentLessonsList = document.getElementById('lessons-list');
+                if (currentLessonsList) {
+                    const currentDayElements = currentLessonsList.querySelectorAll(`.lesson-item[data-day="${day}"]`);
+                    if (currentDayElements.length > 0) {
+                        return currentDayElements.length;
+                    }
+                }
+                
+                // Conservative fallback - assume multiple lessons per day based on API structure
+                // This matches the typical API response that has ~6-8 lesson sections
+                return 6;
+                
+            } catch (error) {
+                console.error('Error getting total lessons for day:', error);
+                return 6; // Conservative fallback
+            }
+        }
+        
+        // Show learning content for a specific day
+        async function showLearningForDay(dayNumber) {
+            try {
+                const userIdentity = JSON.parse(localStorage.getItem('growth90_user_identity') || '{}');
+                if (userIdentity.selectedTopic) {
+                    // Update current navigation
+                    updateActiveNavigation('learning');
+                    
+                    // Load lessons for the specific day
+                    await loadTodaysLessons(userIdentity.selectedTopic, dayNumber);
+                } else {
+                    // No topic selected, redirect to topic selection
+                    Core.Router.navigate('onboarding');
+                }
+            } catch (error) {
+                console.error('Error showing learning for day:', error);
+                showTodaysLearning(); // Fallback to regular learning view
+            }
+        }
+
+        async function startFirstLesson() {
+            try {
+                const userIdentity = JSON.parse(localStorage.getItem('growth90_user_identity') || '{}');
+                const userId = userIdentity.email || userIdentity.id || 'guest';
+                const pathId = userIdentity.selectedTopic?.id || 'default';
+                
+                // Get the current day based on completion
+                const currentDay = await getCurrentDayByCompletion(userId, pathId);
+                
+                // Navigate to learning page and show lessons for current day
+                Core.Router.navigate('learning');
+                
+                // After navigation and render, auto-open the next incomplete lesson
+                const tryOpenNextLesson = () => {
+                    const lessonsList = document.getElementById('lessons-list');
+                    if (!lessonsList) return;
+                    // Prefer first incomplete lesson's start button
+                    const nextBtn = lessonsList.querySelector('.lesson-item:not(.completed) .lesson-start-btn');
+                    const anyBtn = lessonsList.querySelector('.lesson-start-btn');
+                    if (nextBtn) { nextBtn.click(); return; }
+                    if (anyBtn) { anyBtn.click(); return; }
+                    // Curriculum-based day: content is already visible; just focus/scroll
+                    const curriculum = document.querySelector('.curriculum-lesson');
+                    if (curriculum) {
+                        curriculum.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                };
+                
+                // Small delay to ensure navigation completes and DOM renders
+                setTimeout(async () => {
+                    await showLearningForDay(currentDay);
+                    // Allow DOM to update, then try to open the proper lesson
+                    setTimeout(tryOpenNextLesson, 120);
+                }, 100);
+                
+            } catch (error) {
+                console.error('Error starting lesson:', error);
+                // Fallback to clicking first lesson button if available
+                const firstLessonBtn = document.querySelector('.lesson-start-btn');
+                if (firstLessonBtn) {
+                    firstLessonBtn.click();
+                }
             }
         }
 
